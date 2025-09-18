@@ -1,0 +1,6 @@
+# Set the default behavior for all text files.
+* text=auto
+
+# Explicitly force shell scripts to always use Linux (LF) line endings.
+# This is critical for compatibility with Docker/Linux.
+*.sh eol=lf

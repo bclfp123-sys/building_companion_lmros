@@ -1,0 +1,33 @@
+services:
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.3.1
+    container_name: mlflow_server
+    ports:
+      - "5001:5000"
+    volumes:
+      - ../db:/mlflow/db            # Database location
+      - ../artifacts:/artifacts     # Separate location for artifacts
+      - ./init-mlflow.sh:/init-mlflow.sh
+    restart: always
+    user: "0:0"  # Run as root
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=sqlite:////mlflow/db/mlflow.db
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=/artifacts
+    command: ["bash", "/init-mlflow.sh"]
+
+  jupyter:
+    image: jupyter/scipy-notebook:latest
+    container_name: jupyter_lab_legal
+    ports:
+      - "8889:8888"
+    volumes:
+      - ../notebooks:/home/jovyan/work
+      - ../data:/home/jovyan/work/data
+      - ../artifacts:/home/jovyan/work/artifacts
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    restart: always
+    command: start-notebook.sh --NotebookApp.token='' --NotebookApp.password='' --NotebookApp.allow_root=True
+    depends_on:
+      - mlflow
