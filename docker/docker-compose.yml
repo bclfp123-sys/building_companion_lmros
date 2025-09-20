@@ -24,6 +24,7 @@ services:
       - "8889:8888" # Using port 8889 to avoid conflicts
     volumes:
       - ../:/home/jovyan/work # Mount the entire project folder
+      - ../artifacts:/artifacts # Specific access to artifacts
     environment:
       - JUPYTER_ENABLE_LAB=yes
       - MLFLOW_TRACKING_URI=http://mlflow:5000 # Connect to our MLflow service
