@@ -11,15 +11,12 @@ RUN apt-get update && apt-get install -y \
 COPY docker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy API code
-COPY api /app
+# --- THIS IS THE FIX ---
+# Copy the src directory instead of the non-existent api directory
+COPY src /app
 
 # Expose API port
-EXPOSE 3000
+EXPOSE 8000
 
-# Health check endpoint
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3000/health || exit 1
-
-# Start BonsAI Chat Bot by default
-CMD ["python", "bonsai_app.py"]
+# Start the application using the main.py from your colleague's code
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
