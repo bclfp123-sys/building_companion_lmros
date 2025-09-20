@@ -1,0 +1,17 @@
+# PDF/Text processing
+pdfplumber
+pypdf
+python-docx
+beautifulsoup4
+lxml
+openai
+tiktoken
+dspy
+rouge-score
+requests
+textstat
+faiss-cpu
+mlflow==3.3.1
+# Utilities
+python-dotenv
+numpy
