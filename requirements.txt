@@ -1,18 +1,19 @@
 # MLflow for tracking
 mlflow==3.3.1
+Flask>=2.3.0
+python-dotenv
 
-# LangChain and its components
+# LLM and RAG
 langchain
 langchain-community
 langchain-openai
 langchain-huggingface
-
-# Vector Store & Embeddings
 faiss-cpu
 sentence-transformers
-
-# Data Handling & Utilities
-numpy==1.24
 PyMuPDF
+
+# Utilities
+pandas
+numpy==1.24
+requests
 unidecode
-python-dotenv

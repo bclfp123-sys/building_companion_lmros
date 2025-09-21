@@ -28,29 +28,27 @@ services:
     environment:
       - JUPYTER_ENABLE_LAB=yes
       - MLFLOW_TRACKING_URI=http://mlflow:5000 # Connect to our MLflow service
-      # We will add OpenAI/Azure credentials here later
-      # - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
-      # - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
     restart: always
     command: start-notebook.sh --NotebookApp.token='' --NotebookApp.password='' --NotebookApp.allow_root=True
     depends_on:
       - mlflow
 
-  # # 3. FastAPI Service for the Chatbot API
-  # legal_chatbot_api:
-  #   build:
-  #     context: ..
-  #     dockerfile: docker/Dockerfile.api
-  #   container_name: api_service_legal
-  #   ports:
-  #     - "8000:8000"
-  #   volumes:
-  #     - ../src:/app/src
-  #     - ../artifacts:/app/artifacts
-  #     - ../data:/app/data
-  #     - ../.env:/app/.env # Mount the .env file
-  #   environment:
-  #     - MLFLOW_TRACKING_URI=http://mlflow:5000
-  #   restart: always
-  #   depends_on:
-  #     - mlflow
+  # 3. Flask API Service for the Legal Chatbot
+  legal_chatbot_api:
+    container_name: legal_api
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../artifacts:/app/artifacts  # <-- ONLY mount artifacts, not the whole project
+    depends_on:
+      - mlflow
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    env_file:
+      - ../.env
+    restart: always # Added for stability

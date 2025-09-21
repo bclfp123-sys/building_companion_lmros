@@ -1,113 +1,81 @@
-import pickle
-import numpy as np
-from src.embeddings.vector_store import VectorStore
-from src.embeddings.embedder import get_embedding
-from src.embeddings.embedder import generate_answer_openai
+import os
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_openai import AzureChatOpenAI
+from langchain.prompts import PromptTemplate
+from langchain.chains import RetrievalQA
 
-class RAGCourseAgent:
-    def ai_rerank(self, query, candidates, use_summary=True, max_tokens=300):
-        """
-        Use LLM to select the most relevant chunks/summaries for the query.
-        """
-        context_list = []
-        for i, (meta_item, score) in enumerate(candidates):
-            chunk_content = meta_item.get("summary") if use_summary and meta_item.get("summary") else meta_item.get("text")
-            context_list.append(f"Trecho {i+1}:\n{chunk_content}")
+# Import the centralized, absolute path from the config file
+from src.config import VECTOR_STORE_DIR
 
-        context_str = "\n\n".join(context_list)
-        prompt = (
-            f"Pergunta do utilizador: {query}\n\n"
-            f"Segue-se uma lista de excertos de documentos. Indica quais os trechos mais relevantes para responder à pergunta, justificando brevemente a escolha:\n\n"
-            f"{context_str}\n\n"
-            "Responde com os números dos trechos mais relevantes e uma breve justificação."
+class RAGAgent:
+    def __init__(self):
+        print("Initializing RAG Agent...")
+
+        # 1. Load Embedding Model
+        model_name = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        self.embedder = HuggingFaceEmbeddings(model_name=model_name)
+
+        # 2. Load the Vector Store using the correct path from config
+        print(f"Loading vector store from: {VECTOR_STORE_DIR}")
+        if not os.path.exists(VECTOR_STORE_DIR):
+            raise FileNotFoundError(
+                f"Vector store not found at path: {VECTOR_STORE_DIR}. "
+                "Please run the '01-Data-Ingestion-and-Embedding.ipynb' notebook first."
+            )
+        self.db = FAISS.load_local(
+            VECTOR_STORE_DIR,
+            self.embedder,
+            allow_dangerous_deserialization=True
+        )
+        self.retriever = self.db.as_retriever()
+        print("✅ Vector store loaded.")
+
+        # 3. Initialize the LLM Client
+        self.llm = AzureChatOpenAI(
+            deployment_name=os.getenv("AZURE_DEPLOYMENT_NAME"),
+            openai_api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview")
         )
 
-        response = generate_answer_openai(prompt, model=self.openai_model, max_tokens=max_tokens)
-        return response
-    def __init__(self, threshold=0.4, openai_model="gpt-3.5-turbo"):
-        # Load FAISS + meta
-        self.vs = VectorStore()
-        self.vs.load()  # loads faiss.index
-        with open("embeddings/meta.pkl", "rb") as f:
-            self.meta = pickle.load(f)
-        self.openai_model = openai_model
-        self.threshold = threshold  # minimum similarity to consider relevant
+        # 4. Define the Prompt Template (using a default persona)
+        prompt_template = """
+        You are a helpful AI assistant for homeowners in Portugal.
+        Use the provided legal information from the Regulamento Geral das Edificações Urbanas to answer the question
+        in a simple, easy-to-understand way. Explain the key points without complex legal jargon.
+        If you don't know the answer from the context, state that you do not know.
 
-    def cosine_similarity(self, a, b):
-        a = np.array(a)
-        b = np.array(b)
-        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+        Based on the regulations: {context}
 
-    def retrieve(self, query: str, top_k=5, alpha=0.5, ai_rerank=True):
+        Question: {question}
+
+        Helpful Answer (in Portuguese):
         """
-        Recupera excertos relevantes usando embeddings do chunk e do resumo.
-        alpha: peso para combinar as similaridades (0.5 = média simples)
-        """
-        # Embed the query for both chunk and summary
-        query_embedding = get_embedding(query)
-        query_summary_embedding = get_embedding(query)  # Optionally, use a different prompt for summary
-
-        scores = []
-        for meta_item in self.meta:
-            chunk_emb = meta_item.get("chunk_embedding")
-            summary_emb = meta_item.get("summary_embedding")
-            if chunk_emb is not None and summary_emb is not None:
-                chunk_score = self.cosine_similarity(query_embedding, chunk_emb)
-                summary_score = self.cosine_similarity(query_summary_embedding, summary_emb)
-                combined_score = alpha * chunk_score + (1 - alpha) * summary_score
-            elif chunk_emb is not None:
-                combined_score = self.cosine_similarity(query_embedding, chunk_emb)
-            else:
-                combined_score = 0
-            scores.append((meta_item, combined_score))
-
-        # Sort by combined score and keep more candidates for AI rerank
-        scores = [item for item in scores if item[1] >= self.threshold]
-        scores.sort(key=lambda x: x[1], reverse=True)
-        candidates = scores[:max(20, top_k)]
-
-        if ai_rerank and candidates:
-            ai_response = self.ai_rerank(query, candidates)
-            print("AI Rerank Response:", ai_response)
-            # Optionally, parse ai_response to select the best chunks
-            # For now, just return the top_k candidates
-            return candidates[:top_k]
-        else:
-            return candidates[:top_k]
-
-    def answer(self, query: str, top_k=5, max_tokens=500, use_summary=True):
-        """
-        Gerar uma resposta à pergunta usando o contexto recuperado.
-        Se use_summary=True, utiliza os resumos dos excertos; caso contrário, utiliza o texto completo.
-        """
-        # Step 1: Retrieve relevant chunks
-        retrieved_chunks = self.retrieve(query, top_k=top_k)
-
-        if not retrieved_chunks:
-            return "❌ Desculpe, não tenho informação suficiente no corpus para responder a isso."
-
-        # Passo 2: Preparar contexto da meta
-        context_texts = []
-        for chunk, score in retrieved_chunks:
-            # Usa o resumo se disponível e solicitado, senão usa o texto completo
-            chunk_content = chunk.get("summary") if use_summary and chunk.get("summary") else chunk.get("text")
-            header = f"[Fonte: {chunk.get('file', 'desconhecido')} | Chunk: {chunk.get('chunk_id', 'N/D')}]"
-            context_texts.append(f"{header}\n{chunk_content}")
-
-        context = "\n\n".join(context_texts)
-        print("------------------------------HERE------------------------------")
-        print(context)
-        asdasd
-
-        # Passo 3: Construir prompt para LLM
-        prompt = (
-            f"És um assistente de ensino.\n\n"
-            f"Utiliza o seguinte contexto extraído dos documentos para responder à pergunta do utilizador:\n\n"
-            f"{context}\n\n"
-            f"Pergunta do Utilizador: {query}\n\n"
-            "Responde de forma clara e concisa usando apenas o contexto fornecido. "
-            "Se o contexto não contiver a resposta, diz que não sabes."
+        self.prompt = PromptTemplate(
+            template=prompt_template, input_variables=["context", "question"]
         )
 
-        # Step 4: Gerar resposta usando OpenAI
-        return generate_answer_openai(prompt, model=self.openai_model, max_tokens=max_tokens)
+        # 5. Create the RetrievalQA Chain
+        self.qa_chain = RetrievalQA.from_chain_type(
+            llm=self.llm,
+            chain_type="stuff",
+            retriever=self.retriever,
+            return_source_documents=False, # We only need the final answer for the API
+            chain_type_kwargs={"prompt": self.prompt}
+        )
+        print("✅ RAG Agent chain is ready.")
+
+
+    def ask(self, question: str):
+        """
+        Asks a question to the RAG chain and returns the answer.
+        """
+        if not question:
+            return "Please provide a question."
+
+        try:
+            # The .invoke method is standard for newer LangChain versions
+            result = self.qa_chain.invoke({"query": question})
+            return result.get('result', "No answer could be generated.")
+        except Exception as e:
+            print(f"❌ Error during RAG agent query: {e}")
+            return "Sorry, I encountered an error while processing your request."
